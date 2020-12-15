@@ -36,9 +36,12 @@ type Stats struct {
 var stats = Stats{Total: 0, Average: 0}
 var hashedPasswords = new(sync.Map)
 var hashIdCounter uint64
-var averageProcessingTime uint64
+
 var wg sync.WaitGroup
 var shutdownWg sync.WaitGroup
+var mutex = &sync.Mutex{}
+var numberOfRequests uint64
+var isShuttingDown bool
 
 func GetHashedPassword(password string) string {
 
@@ -68,18 +71,25 @@ func (a *App) Handle(pattern string, handler Handler) {
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := &Context{Request: r, ResponseWriter: w}
 
-	for _, rt := range a.Routes {
-		if matches := rt.Pattern.FindStringSubmatch(ctx.URL.Path); len(matches) > 0 {
-			if len(matches) > 1 {
-				ctx.Params = matches[1:]
+	if isShuttingDown {
+		ctx.Text(http.StatusServiceUnavailable, "Service Unavailable")
+	} else {
+		ctx := &Context{Request: r, ResponseWriter: w}
+
+		for _, rt := range a.Routes {
+			if matches := rt.Pattern.FindStringSubmatch(ctx.URL.Path); len(matches) > 0 {
+				if len(matches) > 1 {
+					ctx.Params = matches[1:]
+				}
+
+				rt.Handler(ctx)
+
+				return
 			}
-
-			rt.Handler(ctx)
-			return
 		}
-	}
 
-	a.DefaultRoute(ctx)
+		a.DefaultRoute(ctx)
+	}
 }
 
 type Context struct {
@@ -114,6 +124,8 @@ func main() {
 	app := NewApp()
 
 	app.Handle(`^/hash$`, func(ctx *Context) {
+		startTime := time.Now()
+
 		if ctx.Request.Method == http.MethodPost {
 			wg.Add(1)
 
@@ -121,7 +133,7 @@ func main() {
 			ctx.Request.ParseForm()
 			var password = ctx.Request.PostFormValue("password")
 
-			var timer = time.NewTimer(5 * time.Second)
+			var timer = time.NewTimer(30 * time.Second)
 			go func() {
 				<-timer.C
 				hashedPasswords.Store(newValue, GetHashedPassword(password))
@@ -129,6 +141,14 @@ func main() {
 			}()
 
 			ctx.Text(http.StatusOK, fmt.Sprintf("%v", newValue))
+
+			duration := time.Now().Sub(startTime)
+
+			mutex.Lock()
+			var processingTime = uint64((duration * time.Microsecond))
+			stats.Average = ((stats.Average * (hashIdCounter - 1)) + processingTime) / hashIdCounter
+			stats.Total = hashIdCounter
+			mutex.Unlock()
 
 		} else {
 			ctx.Text(http.StatusNotFound, "Invalid Method")
@@ -156,14 +176,13 @@ func main() {
 	})
 
 	app.Handle(`/stats`, func(ctx *Context) {
-		stats.Total = hashIdCounter
-		stats.Average = averageProcessingTime
 		ctx.Json(http.StatusOK, stats)
 	})
 
 	app.Handle(`/shutdown`, func(ctx *Context) {
 		ctx.Text(http.StatusOK, "")
 		shutdownWg.Done()
+		isShuttingDown = true
 	})
 
 	shutdownWg.Add(1)
