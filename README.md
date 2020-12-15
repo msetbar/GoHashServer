@@ -3,6 +3,7 @@
 This project is not scalable but it can be easily converted to a scable project. The structure of the project is flat and only using standard Go libiraies. On top of the standard libraries, two classes have been implemened to make easy to setup the routings and also a wrapper to wrap request context. There is no unit test in the project due to time but for any project, it is important to use TDD and BDD methods to implement enought tests with a good code coverage.
 
 There are four main endpoints in this project:
+
     * POST hash: There is no input validation for incoming parameters. So the requests with no password will also be accepted.
 
     * GET hash/id: `id` should be a number and all invalid requests will be rejected with 404 status code. If a request is sent for a hash id that its hash still has not been calculated, the request will also be rejected with 404 status code.
